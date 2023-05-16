@@ -3,6 +3,70 @@ import pandas as pd
 from geostatspy import geostats
 from scipy.interpolate import interp1d
 import os
+# %% Multi-point statistcis
+
+def snesim(df_,xcol,ycol,zcol,vcol, nreal, NX, NY, NZ, NX_ti, NY_ti, NZ_ti, training_image, seed = 77777, num_category = 2, shale_ratio = 0.85,  output_file = 'snesim.out'):
+        
+    # make hard data file
+    x = df_[xcol]
+    y = df_[ycol]
+    z = df_[zcol]
+    v = df_[vcol]
+    df_temp = pd.DataFrame({"X": x, "Y": y, "Z": z, "Var": v})
+    Dataframe2GSLIB("data_temp.dat", df_temp)
+
+    # make training image file
+    with open("train.dat", "w") as f:
+        f.write("train image \n")
+        f.write("1 \n")
+        f.write("value \n")
+        for i in training_image.flatten():
+            f.write(f"{int(i)} \n")
+    
+    with open("snesim.par", "w") as f:
+        f.write("              Parameters for sneszim                                         \n")
+        f.write("              ********************                                         \n")
+        f.write("                                                                           \n")
+        f.write("START OF PARAMETER:                                                        \n")
+        f.write("data_temp.dat                 -file with data                              \n")
+        f.write("1  2  3  4                    -  columns for X,Y,Z,vr,wt,sec.var.          \n")
+        f.write(f"{num_category}               - number of categories                       \n")
+        f.write(f"{str(np.arange(2)).split('[')[1].split(']')[0]} - number of categories    \n")
+        f.write(f"{np.round(shale_ratio,3)} {np.round(1-shale_ratio,3)}                - (target) global pdf    \n")      
+        f.write("0               -  use (target) vertical proportions (0=no, 1=yes)\n")
+        f.write("vertprop.dat    - file with target vertical proportions\n")
+        f.write("0               - servosystem parameter (0=no correction)\n")        
+        f.write("-1              - debugging level: 0,1,2,3\n")
+        f.write("snesim.dbg      - debugging file\n")
+        f.write(f"{output_file}\n")
+        f.write(f"{nreal} - number of realizations to generate \n")
+        f.write(f"{NX} 0.5 1                   - nx,xmn,xsiz          \n")
+        f.write(f"{NY} 0.5 1                             - ny,ymn,ysiz          \n")
+        f.write(f"{NZ} 0.5 1                   - nz,zmn,zsiz          \n")
+        f.write(f"{seed}                    - random number seed    \n")
+        f.write("26                             \n")
+        f.write("10                            \n")
+        f.write("0 0                            \n")
+        f.write("1 1                           \n")
+        f.write("localprop.dat                     \n")
+        f.write("0                             \n")
+        f.write("rot_aff.dat                       \n")
+        f.write("3               - number of affinity categories                       \n")
+        f.write("1 1 1           - affinity factors (X,Y,Z) icat=1                         \n")
+        f.write("1 0.5 1         - affinity factors (X,Y,Z) icat=2                          \n")
+        f.write("1 2 1           - affinity factors (X,Y,Z) icat=3                          \n")
+        f.write("5               - number of multiple grids                          \n")
+        f.write("train.dat       - file with training image                          \n")
+        f.write(f"{NX_ti} {NY_ti} {NZ_ti}       - training image dimensions: nxtr, nytr, nztr       \n")
+        f.write("1               - column for training variable                          \n")
+        f.write("10 10 5         - maximum search radii (hmax,hmin,hvert)                          \n")
+        f.write("0 0 0           - angles for search ellipsoid (amax,amin,avert)                \n")
+
+    os.system("snesim.exe < snesim.par")
+    sim_array = GSLIB2ndarray_3D(output_file, 0 , nreal, NX, NY, NZ)
+    return sim_array[0]
+
+
 # %% two-points statistics
 def sgsim_3d(nreal, df_, xcol, ycol, zcol, vcol, Val_range, nx_cells, ny_cells, nz, hsiz, vsiz, hmn_max,
              hmn_med, zmn_ver, seed, var, output_file):
@@ -232,21 +296,42 @@ def create_sis_model(dataframe, vario_dictionary, Val_name, Num_real, horizon_gr
     }
     return sis_model
 
+def create_snesim_model(dataframe, training_image, Val_name, Num_real,num_category =2, shale_ratio = 0.5, grid_dim = [64,64,7], grid_mn=[0.5, 0.5, 0.5], ti_grid_dim = [64,64,7], seed = 77777,horizon_grid_size = 1, vertical_grid_size = 1):
+    dataframe ['X_i'] = np.round((dataframe ['X'] - grid_mn[0]) / horizon_grid_size)+0.5
+    dataframe ['Y_j'] = np.round((dataframe ['Y'] - grid_mn[1]) / horizon_grid_size)+0.5
+    dataframe ['Z_k'] = np.round((dataframe ['Z'] - grid_mn[2]) /  vertical_grid_size)+0.5
+    
+    snesim_model = {
+        "nreal": Num_real,
+        "df_": dataframe,
+        "xcol": "X_i",
+        "ycol": "Y_j",
+        "zcol": "Z_k",
+        "vcol": Val_name,
+        "NX": grid_dim[0],
+        "NY": grid_dim[1],
+        "NZ":  grid_dim[2],
+        "NX_ti": ti_grid_dim[0],
+        "NY_ti": ti_grid_dim[1],
+        "NZ_ti":  ti_grid_dim[2],
+        "seed": seed,
+        "num_category": num_category,
+        "shale_ratio": shale_ratio,
+        "training_image": training_image,
+        "output_file": "snesim.out"
+    }
+    return snesim_model
 
 def sgs_realizations(sgs_model_dict):
-    #for i in range(n_realizations):
-    #sgs_model_dict['seed'] = i + 5
     sim = sgsim_3d(**sgs_model_dict)
-    #tensor[i, ...] = sim[0, ...]
-
     return sim
 
 def sis_realizations(sis_model_dict):
-    #for i in range(n_realizations):
-    #sgs_model_dict['seed'] = i + 5
     sim = sisim_3d(**sis_model_dict)
-    #tensor[i, ...] = sim[0, ...]
+    return sim
 
+def snesim_realizations(snemic_model_dict):
+    sim = snesim(**snemic_model_dict)
     return sim
 
 # %% GSLIB from Dr. Pyrcz's script
